@@ -1,0 +1,356 @@
+{
+  "skill_name": "helm-charts-hardened",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I have a Node.js REST API that listens on port 3000 and exposes a /health endpoint. It needs to scale automatically based on CPU usage and should run with minimal privileges. Create a Helm chart for it with security hardening and HPA configured.",
+      "expected_output": "A complete Helm chart with Deployment, Service, ServiceAccount, RBAC, NetworkPolicy, HPA, and hardened security context (non-root user, read-only filesystem, dropped capabilities)",
+      "files": [],
+      "assertions": [
+        {
+          "id": "has_deployment",
+          "text": "Chart contains Deployment or StatefulSet resource",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "kind:\\s*(Deployment|StatefulSet)"
+        },
+        {
+          "id": "has_hpa",
+          "text": "Chart includes HorizontalPodAutoscaler for scaling",
+          "type": "file_contains",
+          "file_pattern": "templates/hpa.yaml",
+          "pattern": "kind:\\s*HorizontalPodAutoscaler"
+        },
+        {
+          "id": "has_security_context",
+          "text": "Deployment includes hardened securityContext with non-root user",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "runAsNonRoot:\\s*true"
+        },
+        {
+          "id": "has_dropped_caps",
+          "text": "Container drops ALL Linux capabilities",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "drop:\\s*-\\s*ALL"
+        },
+        {
+          "id": "has_readonly_fs",
+          "text": "Container uses read-only root filesystem",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "readOnlyRootFilesystem:\\s*true"
+        },
+        {
+          "id": "has_rbac",
+          "text": "Chart includes RBAC resources (ServiceAccount, Role, RoleBinding)",
+          "type": "file_pattern",
+          "file_patterns": ["templates/serviceaccount.yaml", "templates/role*.yaml"],
+          "all_match": true
+        },
+        {
+          "id": "has_network_policy",
+          "text": "Chart includes NetworkPolicy for traffic control",
+          "type": "file_contains",
+          "file_pattern": "templates/networkpolicy.yaml",
+          "pattern": "kind:\\s*NetworkPolicy"
+        },
+        {
+          "id": "has_probes",
+          "text": "Deployment includes health check probes (livenessProbe/readinessProbe)",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "(livenessProbe|readinessProbe)"
+        },
+        {
+          "id": "has_service",
+          "text": "Chart includes Service resource",
+          "type": "file_contains",
+          "file_pattern": "templates/service.yaml",
+          "pattern": "kind:\\s*Service"
+        },
+        {
+          "id": "has_values_file",
+          "text": "Chart includes values.yaml with configurable parameters",
+          "type": "file_exists",
+          "file_pattern": "values.yaml"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I need to deploy a PostgreSQL database to Kubernetes. It needs persistent storage, should run as non-root, and must be able to accept connections from application pods in the same namespace. Create a Helm chart with a StatefulSet.",
+      "expected_output": "A StatefulSet-based Helm chart with PersistentVolumeClaim, headless Service, RBAC, hardened security, NetworkPolicy allowing connections from app pods",
+      "files": [],
+      "assertions": [
+        {
+          "id": "has_statefulset",
+          "text": "Chart uses StatefulSet for the database workload",
+          "type": "file_contains",
+          "file_pattern": "templates/statefulset.yaml",
+          "pattern": "kind:\\s*StatefulSet"
+        },
+        {
+          "id": "has_pvc",
+          "text": "StatefulSet includes volumeClaimTemplates for persistent storage",
+          "type": "file_contains",
+          "file_pattern": "templates/statefulset.yaml",
+          "pattern": "volumeClaimTemplates"
+        },
+        {
+          "id": "has_headless_service",
+          "text": "Chart includes headless Service (clusterIP: None) for DNS discovery",
+          "type": "file_contains",
+          "file_pattern": "templates/service*.yaml",
+          "pattern": "clusterIP:\\s*None"
+        },
+        {
+          "id": "has_nonroot_statefulset",
+          "text": "StatefulSet runs as non-root user",
+          "type": "file_contains",
+          "file_pattern": "templates/statefulset.yaml",
+          "pattern": "runAsNonRoot:\\s*true"
+        },
+        {
+          "id": "has_init_container",
+          "text": "StatefulSet includes init container to handle permissions",
+          "type": "file_contains",
+          "file_pattern": "templates/statefulset.yaml",
+          "pattern": "initContainers"
+        },
+        {
+          "id": "has_network_policy_db",
+          "text": "Chart includes NetworkPolicy allowing same-namespace connections",
+          "type": "file_contains",
+          "file_pattern": "templates/networkpolicy.yaml",
+          "pattern": "kind:\\s*NetworkPolicy"
+        },
+        {
+          "id": "has_rbac_db",
+          "text": "Chart includes ServiceAccount for RBAC",
+          "type": "file_contains",
+          "file_pattern": "templates/serviceaccount.yaml",
+          "pattern": "kind:\\s*ServiceAccount"
+        },
+        {
+          "id": "has_probes_db",
+          "text": "StatefulSet includes health check probes",
+          "type": "file_contains",
+          "file_pattern": "templates/statefulset.yaml",
+          "pattern": "(livenessProbe|readinessProbe)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I'm deploying a multi-container pod with an Nginx reverse proxy sidecar next to my Go application on port 8080. The app needs to write logs to /var/log/app and expose metrics on /metrics. Create a hardened Helm chart.",
+      "expected_output": "Deployment with two containers, shared emptyDir volume for logs with proper ownership, hardened security contexts for both containers, NetworkPolicy, health checks on metrics endpoint",
+      "files": [],
+      "assertions": [
+        {
+          "id": "has_deployment_sidecar",
+          "text": "Chart contains Deployment resource",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "kind:\\s*Deployment"
+        },
+        {
+          "id": "has_multiple_containers",
+          "text": "Deployment includes multiple containers (main + sidecar)",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "containers:\\s*-.*containers:\\s*-"
+        },
+        {
+          "id": "has_shared_volume",
+          "text": "Deployment includes shared emptyDir volume for logs",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "emptyDir|volumes:"
+        },
+        {
+          "id": "has_fsgroup",
+          "text": "Pod security context includes fsGroup for volume ownership",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "fsGroup"
+        },
+        {
+          "id": "has_security_context_sidecar",
+          "text": "Both containers have hardened security context",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "allowPrivilegeEscalation:\\s*false"
+        },
+        {
+          "id": "has_configmap_nginx",
+          "text": "Chart includes ConfigMap for Nginx configuration",
+          "type": "file_contains",
+          "file_pattern": "templates/configmap*.yaml",
+          "pattern": "kind:\\s*ConfigMap"
+        },
+        {
+          "id": "has_metrics_probe",
+          "text": "Deployment has health check probes",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "readinessProbe|livenessProbe"
+        },
+        {
+          "id": "has_network_policy_sidecar",
+          "text": "Chart includes NetworkPolicy",
+          "type": "file_contains",
+          "file_pattern": "templates/networkpolicy.yaml",
+          "pattern": "kind:\\s*NetworkPolicy"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I need a Helm chart for a backup job that runs every day at 2 AM. It connects to a database using a secret (connection string), reads a config file from a ConfigMap for backup options, and uploads to S3. Create a CronJob with proper security hardening.",
+      "expected_output": "A CronJob Helm chart with Secret and ConfigMap resources, hardened Pod template (non-root, read-only root, dropped caps), volumeMounts for secret and configmap, RBAC for service account, NetworkPolicy, proper restart policy",
+      "files": [],
+      "assertions": [
+        {
+          "id": "has_cronjob",
+          "text": "Chart contains CronJob resource",
+          "type": "file_contains",
+          "file_pattern": "templates/cronjob.yaml",
+          "pattern": "kind:\\s*CronJob"
+        },
+        {
+          "id": "has_schedule",
+          "text": "CronJob has a schedule defined (for daily 2 AM execution)",
+          "type": "file_contains",
+          "file_pattern": "templates/cronjob.yaml",
+          "pattern": "schedule:"
+        },
+        {
+          "id": "has_secret_mount",
+          "text": "CronJob pod mounts Secret for database credentials",
+          "type": "file_contains",
+          "file_pattern": "templates/cronjob.yaml",
+          "pattern": "secret|volumeMounts"
+        },
+        {
+          "id": "has_configmap_backup",
+          "text": "Chart includes ConfigMap for backup configuration",
+          "type": "file_contains",
+          "file_pattern": "templates/configmap.yaml",
+          "pattern": "kind:\\s*ConfigMap"
+        },
+        {
+          "id": "has_secret_resource",
+          "text": "Chart includes Secret resource template",
+          "type": "file_pattern",
+          "file_patterns": ["templates/secret*.yaml"],
+          "all_match": false
+        },
+        {
+          "id": "has_cronjob_security",
+          "text": "CronJob pod template has hardened security context (non-root)",
+          "type": "file_contains",
+          "file_pattern": "templates/cronjob.yaml",
+          "pattern": "runAsNonRoot:\\s*true"
+        },
+        {
+          "id": "has_cronjob_caps",
+          "text": "CronJob containers drop capabilities",
+          "type": "file_contains",
+          "file_pattern": "templates/cronjob.yaml",
+          "pattern": "drop:"
+        },
+        {
+          "id": "has_rbac_cronjob",
+          "text": "Chart includes ServiceAccount for CronJob RBAC",
+          "type": "file_contains",
+          "file_pattern": "templates/serviceaccount.yaml",
+          "pattern": "kind:\\s*ServiceAccount"
+        },
+        {
+          "id": "has_restart_policy",
+          "text": "CronJob specifies restart policy",
+          "type": "file_contains",
+          "file_pattern": "templates/cronjob.yaml",
+          "pattern": "restartPolicy"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "I have a web application that needs database connection secrets (username, password, host) and a config file (database pool size, timeouts). Create a Helm chart that uses both Secrets and ConfigMaps, with the values parameterized so I can deploy to dev, staging, and prod.",
+      "expected_output": "Deployment Helm chart with Secret and ConfigMap templates, values.yaml with environment-specific parameters, hardened security context, proper volumeMounts for both secret and configmap, examples of different values for each environment",
+      "files": [],
+      "assertions": [
+        {
+          "id": "has_deployment_multienv",
+          "text": "Chart contains Deployment resource",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "kind:\\s*Deployment"
+        },
+        {
+          "id": "has_secret_multienv",
+          "text": "Chart includes Secret template for database credentials",
+          "type": "file_contains",
+          "file_pattern": "templates/secret*.yaml",
+          "pattern": "kind:\\s*Secret"
+        },
+        {
+          "id": "has_configmap_multienv",
+          "text": "Chart includes ConfigMap template for database configuration",
+          "type": "file_contains",
+          "file_pattern": "templates/configmap*.yaml",
+          "pattern": "kind:\\s*ConfigMap"
+        },
+        {
+          "id": "has_values_dev",
+          "text": "Chart includes values-dev.yaml for development environment",
+          "type": "file_exists",
+          "file_pattern": "values-dev.yaml"
+        },
+        {
+          "id": "has_values_staging",
+          "text": "Chart includes values-staging.yaml for staging environment",
+          "type": "file_exists",
+          "file_pattern": "values-staging.yaml"
+        },
+        {
+          "id": "has_values_prod",
+          "text": "Chart includes values-prod.yaml for production environment",
+          "type": "file_exists",
+          "file_pattern": "values-prod.yaml"
+        },
+        {
+          "id": "has_security_multienv",
+          "text": "Deployment includes hardened security context",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "runAsNonRoot:\\s*true"
+        },
+        {
+          "id": "has_secret_mount_multienv",
+          "text": "Deployment mounts Secret as volume",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "secret"
+        },
+        {
+          "id": "has_configmap_mount_multienv",
+          "text": "Deployment mounts ConfigMap as volume",
+          "type": "file_contains",
+          "file_pattern": "templates/deployment.yaml",
+          "pattern": "configMap"
+        },
+        {
+          "id": "has_service_multienv",
+          "text": "Chart includes Service resource",
+          "type": "file_contains",
+          "file_pattern": "templates/service.yaml",
+          "pattern": "kind:\\s*Service"
+        }
+      ]
+    }
+  ]
+}
