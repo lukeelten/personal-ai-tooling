@@ -1,0 +1,64 @@
+{
+  "skill_name": "version-push",
+  "evals": [
+    {
+      "id": 0,
+      "name": "patch-bump-push",
+      "prompt": "I just patched a bug in our keycloak Helm chart (it's at charts/keycloak/Chart.yaml). Bump the chart patch version, commit it, and push to origin.",
+      "expected_output": "Patch bump of the top-level version (v24.5.0 -> v24.5.1) with appVersion and dependency versions untouched; a Conventional Commit like 'chore(keycloak): bump chart version to v24.5.1' staging only Chart.yaml; pushed to the current (non-main) branch.",
+      "files": [],
+      "expectations": [
+        "The top-level chart 'version' field is changed from v24.5.0 to exactly v24.5.1 (a patch bump)",
+        "The 'v' prefix on the version is preserved (not stripped to 24.5.1)",
+        "The 'appVersion' (26.0.12) and the 'common' dependency version (2.0.0) are left unchanged",
+        "The commit subject follows Conventional Commits scoped to the chart, e.g. 'chore(keycloak): bump chart version to v24.5.1'",
+        "Only charts/keycloak/Chart.yaml is staged/committed for the bump (not a broad 'git add -A')",
+        "The commit is pushed to the current feature branch (feature/keycloak-bugfix), not to main or master"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "calver-monthly-release",
+      "prompt": "Time for this month's release of the cmp-postgres chart (charts/cmp-postgres) - bump the month version and push it up to origin.",
+      "expected_output": "A calver bump to vYY.M.0 for the current month (e.g. v26.6.0), recomputed from the rollout month rather than a raw increment; Conventional Commit scoped to the chart; pushed to the current feature branch.",
+      "files": [],
+      "expectations": [
+        "The top-level chart 'version' is set to the CalVer value for the current month, exactly v26.6.0 (year 26, month 6, patch 0)",
+        "The new version is recomputed from the June 2026 rollout month, NOT a raw SemVer increment of v24.5.0 (so it is not v24.5.1 or v24.6.0)",
+        "The 'v' prefix is preserved and the patch component is 0",
+        "The 'appVersion' (16.2.0) and the 'common' dependency version (2.0.0) are left unchanged",
+        "The commit subject follows Conventional Commits scoped to the chart, e.g. 'chore(cmp-postgres): bump chart version to v26.6.0'",
+        "The commit is pushed to the current branch (release/june-2026), not to main or master"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "protected-branch-guard",
+      "prompt": "Bump the version on the platform-base chart (charts/platform-base) and push to origin.",
+      "expected_output": "The skill detects the repo is on the protected 'main' branch and STOPS before pushing, explaining the risk and offering to create a feature branch (e.g. chore/bump-platform-base-...). It must NOT commit-and-push the bump straight to main.",
+      "files": [],
+      "expectations": [
+        "The agent detects that the repository is on the protected 'main' branch before performing any remote operation",
+        "The version bump is NOT pushed to origin/main: origin/main still points at the initial commit and contains no bump commit",
+        "The agent explains the risk of pushing a release directly to a protected branch",
+        "The agent offers a safer alternative, such as creating a feature branch (e.g. chore/bump-platform-base-<version>)",
+        "The agent does not force-push or otherwise rewrite history on main"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "set-explicit-version",
+      "prompt": "Set the api-gateway chart version (charts/api-gateway/Chart.yaml) to exactly v26.7.0, then commit and push.",
+      "expected_output": "The version is set to exactly v26.7.0 (not incremented), the v-prefix preserved; Conventional Commit 'chore(api-gateway): bump chart version to v26.7.0'; pushed to the current non-main branch.",
+      "files": [],
+      "expectations": [
+        "The top-level chart 'version' is set to exactly v26.7.0 (the explicit requested value), not an increment of the prior v26.6.0",
+        "The 'v' prefix is preserved",
+        "The 'appVersion' (3.1.0) and the 'common' dependency version (2.0.0) are left unchanged",
+        "The commit subject follows Conventional Commits scoped to the chart, e.g. 'chore(api-gateway): bump chart version to v26.7.0'",
+        "Only charts/api-gateway/Chart.yaml is staged/committed for the bump (not a broad 'git add -A')",
+        "The commit is pushed to the current feature branch (feature/api-gateway-release), not to main or master"
+      ]
+    }
+  ]
+}
