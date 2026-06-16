@@ -16,7 +16,6 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_SRC="${REPO_DIR}/skills"
 AGENTS_SRC="${REPO_DIR}/agents"
-OPENCODE_CUSTOM_CFG="${REPO_DIR}/opencode.json"
 HELM_LS_LOCAL_BIN_DIR="${HOME}/.local/share/personal-ai-tooling/bin"
 HELM_LS_LOCAL_BIN="${HELM_LS_LOCAL_BIN_DIR}/helm_ls"
 HELM_LS_CMD=""
@@ -231,40 +230,39 @@ install_opencode() {
     local tmp
     tmp="$(mktemp)"
 
-    # Merge custom opencode config from this repo.
-    if [[ -f "$OPENCODE_CUSTOM_CFG" ]]; then
-        local custom_cfg_for_merge
-        local custom_tmp
-        custom_tmp="$(mktemp)"
-        custom_cfg_for_merge="$custom_tmp"
-
-        # Configure helm-lsp when helm_ls is available.
-        if [[ -z "$HELM_LS_CMD" ]]; then
-            if ! jq 'del(.lsp["helm-lsp"])' "$OPENCODE_CUSTOM_CFG" > "$custom_tmp"; then
-                warn "failed to prepare opencode config without helm-lsp; continuing"
-                custom_cfg_for_merge=""
-            fi
-            skip "helm_ls not found — skipping helm-lsp opencode config"
+    # Apply only helm-related JSON changes so unrelated existing config remains
+    # unchanged.
+    if [[ -z "$HELM_LS_CMD" ]]; then
+        if jq -e '.lsp["helm-lsp"] == null and (.lsp["yaml-ls"].disabled // false) == true' "$cfg" >/dev/null 2>&1; then
+            skip "opencode helm-lsp already absent and yaml-ls already disabled"
+        elif jq '
+            .lsp = (.lsp // {})
+            | del(.lsp["helm-lsp"])
+            | .lsp["yaml-ls"] = ((.lsp["yaml-ls"] // {}) + {"disabled": true})
+        ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"; then
+            skip "helm_ls not found — removed helm-lsp and kept yaml-ls disabled"
         else
-            if jq --arg cmd "$HELM_LS_CMD" '.lsp["helm-lsp"].command[0] = $cmd' "$OPENCODE_CUSTOM_CFG" > "$custom_tmp"; then
-                ok "helm_ls found — enabling helm-lsp opencode config"
-            elif jq 'del(.lsp["helm-lsp"])' "$OPENCODE_CUSTOM_CFG" > "$custom_tmp"; then
-                warn "failed to inject helm_ls command into opencode config; continuing without helm-lsp"
-            else
-                warn "failed to prepare opencode custom config; continuing with existing config"
-                custom_cfg_for_merge=""
-            fi
-        fi
-
-        if [[ -n "$custom_cfg_for_merge" ]]; then
-            if jq -s '.[0] * .[1]' "$cfg" "$custom_cfg_for_merge" > "$tmp" && mv "$tmp" "$cfg"; then
-                ok "merged custom opencode config from ${OPENCODE_CUSTOM_CFG}"
-            else
-                warn "failed to merge custom opencode config; continuing with existing config"
-            fi
+            warn "failed to update opencode helm-lsp settings; continuing"
         fi
     else
-        skip "no repo opencode.json found — only updating skills path"
+        if jq -e --arg cmd "$HELM_LS_CMD" '
+            .lsp["helm-lsp"].command == [$cmd, "serve"]
+            and .lsp["helm-lsp"].extensions == [".yaml", ".yml", ".tpl"]
+            and (.lsp["yaml-ls"].disabled // false) == true
+        ' "$cfg" >/dev/null 2>&1; then
+            skip "opencode helm-lsp already configured"
+        elif jq --arg cmd "$HELM_LS_CMD" '
+            .lsp = (.lsp // {})
+            | .lsp["helm-lsp"] = ((.lsp["helm-lsp"] // {}) + {
+                "command": [$cmd, "serve"],
+                "extensions": [".yaml", ".yml", ".tpl"]
+              })
+            | .lsp["yaml-ls"] = ((.lsp["yaml-ls"] // {}) + {"disabled": true})
+        ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"; then
+            ok "helm_ls found — configured helm-lsp in opencode config"
+        else
+            warn "failed to configure helm-lsp in opencode config; continuing"
+        fi
     fi
 
     # Add skills path if not already present
