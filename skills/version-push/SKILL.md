@@ -1,6 +1,7 @@
 ---
 name: version-push
-description: Increase (bump) the version of an existing Helm chart, then commit and push the change to origin. Use this skill whenever the user wants to release a new chart version, bump/increment/raise a Chart.yaml version, cut a monthly chart release, or says things like "bump the keycloak chart patch version", "bump the month version for the chart and push it", "release v24.6.0", or "increment the chart version and commit" — even if they don't say the word "Helm". The user must specify the bump type as either **patch** (bug-fix increment: vYY.M.Z → vYY.M.Z+1) or **month** (new monthly CalVer release: → vYY.M.0); ask if not provided. This handles the full release motion: editing the top-level `version:` field, a Conventional Commit, and a push to the current branch. It is NOT for scaffolding new charts (use helm-expert for that).
+description: |
+   Increase (bump) the version of an existing Helm chart, then commit and push the change to origin. Use this skill whenever the user wants to release a new chart version, bump/increment/raise a Chart.yaml version, cut a monthly chart release, or says things like "bump the keycloak chart patch version", "bump the month version for the chart and push it", "release v24.6.0", or "increment the chart version and commit" — even if they don't say the word "Helm". The user must specify the bump type as either **patch** (bug-fix increment: vYY.M.Z → vYY.M.Z+1) or **month** (new monthly CalVer release: → vYY.M.0); ask if not provided. This handles the full release motion: editing the top-level `version:` field, a Conventional Commit, and a push to the current branch. It is NOT for scaffolding new charts (use helm-expert for that).
 ---
 
 # Bump a Helm chart version, commit, and push
