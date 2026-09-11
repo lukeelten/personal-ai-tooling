@@ -1,0 +1,33 @@
+{
+  "$comment": "Declarative manifest of third-party plugins and public skills installed by install.sh / install.ps1. See docs/ for the format of each section.",
+
+  "claude": {
+    "marketplaces": [
+      {
+        "name": "claude-plugins-official",
+        "source": "anthropics/claude-plugins-official"
+      }
+    ],
+    "plugins": [
+      "claude-md-management@claude-plugins-official",
+      "code-simplifier@claude-plugins-official",
+      "frontend-design@claude-plugins-official",
+      "gopls-lsp@claude-plugins-official",
+      "playwright@claude-plugins-official",
+      "security-guidance@claude-plugins-official",
+      "superpowers@claude-plugins-official",
+      "typescript-lsp@claude-plugins-official"
+    ]
+  },
+
+  "copilot": {
+    "marketplaces": [],
+    "plugins": []
+  },
+
+  "opencode": {
+    "plugins": []
+  },
+
+  "skills": []
+}

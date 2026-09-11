@@ -21,6 +21,13 @@ application code, build step, or test suite in the traditional sense — the
   run). Not every skill has evals.
 - `agents/`, `prompts/` — currently empty placeholders (`.gitkeep`) for future
   custom agents/prompts.
+- `plugins.json` — declarative manifest of **third-party** plugins and public
+  skills to install (Claude plugins, Copilot plugins, opencode npm plugins,
+  and public skills via `npx skills`). Each section is optional and every list
+  accepts a short string form or a long object form.
+- `docs/` — one document per installation method (`claude-plugins.md`,
+  `copilot-plugins.md`, `opencode-plugins.md`, `public-skills-npx.md`), plus
+  `docs/README.md` describing the manifest and installer options.
 - `install.sh` / `install.ps1` — install the whole `skills/` and `agents/`
   directories into each tool:
   - **opencode**: registers `skills/` via `skills.paths` in
@@ -32,6 +39,29 @@ application code, build step, or test suite in the traditional sense — the
   - The scripts are idempotent (skip if already linked/registered, back up
     real files as `.bak` before relinking) and also handle downloading
     `helm_ls` for the Helm-related skills.
+  - They then install everything declared in `plugins.json` by shelling out to
+    `claude plugin …`, `copilot plugin …`, `opencode plugin …` and
+    `npx skills add …`. Skip this part with `--no-plugins` / `-NoPlugins`.
+
+## Working on the installer
+
+- Each plugin method pre-checks the tool's own installed state before acting
+  (`known_marketplaces.json`, `claude plugin list --json`,
+  `copilot plugin [marketplace] list`, the `plugin` array in `opencode.json`,
+  `npx skills list -g --json`) and prints `[skip]` instead of reinstalling.
+  Keep new methods idempotent the same way — `copilot plugin marketplace add`
+  in particular *fails* on duplicates, so the pre-check is required.
+- **Always redirect stdin (`</dev/null`) for CLIs invoked inside a
+  `while read` loop.** These CLIs otherwise consume the loop's input and
+  silently drop the remaining manifest entries.
+- A missing CLI must `[skip]` and a failed install must `[warn]` — never abort
+  the whole run for one bad entry.
+- `install.ps1` mirrors `install.sh`; change both, and keep the helper pairs in
+  sync (`module_base`/`Get-ModuleBase`, `pname`/`Get-PluginName`,
+  `entry`/`ConvertTo-MarketplaceEntry`).
+- Note that `~/.claude/skills` and `~/.copilot/skills` are symlinks to this
+  repo, so `npx skills add -g` targeting those agents writes into the repo
+  working tree. This is documented in `docs/public-skills-npx.md`.
 
 ## Working on a skill
 

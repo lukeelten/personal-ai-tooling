@@ -11,11 +11,24 @@
 #
 # The whole parent directory is linked so newly added skills/agents are picked
 # up automatically without re-running this script.
+#
+# In addition, third-party plugins and public skills declared in plugins.json
+# are installed via each tool's own CLI:
+#   Claude Code   — claude plugin marketplace add / claude plugin install
+#   Copilot CLI   — copilot plugin marketplace add / copilot plugin install
+#   opencode      — opencode plugin <npm-module> --global
+#   public skills — npx skills add <owner/repo> --global
+# See docs/ for details on each method.
+#
+# Usage: ./install.sh [--no-plugins]
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_SRC="${REPO_DIR}/skills"
 AGENTS_SRC="${REPO_DIR}/agents"
+PLUGINS_MANIFEST="${PAI_PLUGINS_MANIFEST:-${REPO_DIR}/plugins.json}"
+SKILLS_CLI_PKG="${PAI_SKILLS_CLI:-skills@latest}"
+INSTALL_PLUGINS="true"
 HELM_LS_LOCAL_BIN_DIR="${HOME}/.local/share/personal-ai-tooling/bin"
 HELM_LS_LOCAL_BIN="${HELM_LS_LOCAL_BIN_DIR}/helm_ls"
 HELM_LS_CMD=""
@@ -296,9 +309,304 @@ install_vscode() {
     link_dir "${AGENTS_SRC}" "${base}/agents"
 }
 
+# ── plugin manifest helpers ──────────────────────────────────────────────────
+
+# plugins_manifest_ready
+# Returns 0 when plugins.json exists, is valid JSON, and jq is available.
+plugins_manifest_ready() {
+    if [[ ! -f "$PLUGINS_MANIFEST" ]]; then
+        skip "no plugin manifest at ${PLUGINS_MANIFEST}"
+        return 1
+    fi
+    if ! command -v jq &>/dev/null; then
+        warn "jq not found — skipping plugin installation"
+        return 1
+    fi
+    if ! jq -e . "$PLUGINS_MANIFEST" >/dev/null 2>&1; then
+        warn "${PLUGINS_MANIFEST} is not valid JSON — skipping plugin installation"
+        return 1
+    fi
+    return 0
+}
+
+# manifest_query <jq-filter>
+# Runs a jq filter against the manifest, emitting one record per line.
+manifest_query() {
+    jq -r "$1" "$PLUGINS_MANIFEST" 2>/dev/null || true
+}
+
+# jq prelude shared by the manifest queries below.
+#   entry   — normalises a "owner/repo" string or {name, source} object
+#   pname   — derives a plugin name from a source specifier
+MANIFEST_JQ_PRELUDE='
+def basename($s): ($s | sub("\\.git$"; "") | sub(".*/"; ""));
+def entry: if type == "string"
+           then {name: basename(.), source: .}
+           else {name: (.name // basename(.source)), source: .source} end;
+def pname($s): ($s
+    | (if test("^[a-zA-Z][a-zA-Z0-9+.-]*://") then . else sub(":.*$"; "") end)
+    | sub("@.*$"; "")
+    | basename(.));
+'
+
+# module_base <npm-module>
+# Strips a trailing @version from an npm module name, keeping any @scope/ prefix.
+module_base() {
+    local m="$1" lead=""
+    if [[ "$m" == @* ]]; then
+        lead="@"
+        m="${m:1}"
+    fi
+    printf '%s%s' "$lead" "${m%%@*}"
+}
+
+# ── Claude Code plugins ──────────────────────────────────────────────────────
+# Marketplaces are registered with `claude plugin marketplace add`, then plugins
+# are installed as <plugin>@<marketplace>.  Installed state lives in
+# ~/.claude/plugins/known_marketplaces.json and `claude plugin list --json`.
+
+install_claude_plugins() {
+    info "Claude Code — plugins from ${PLUGINS_MANIFEST}"
+
+    if ! command -v claude &>/dev/null; then
+        skip "claude CLI not found — skipping Claude Code plugins"
+        return
+    fi
+
+    local known="${HOME}/.claude/plugins/known_marketplaces.json"
+    local name source
+    while IFS=$'\t' read -r name source; do
+        [[ -z "${name:-}" ]] && continue
+        if [[ -f "$known" ]] && jq -e --arg n "$name" 'has($n)' "$known" >/dev/null 2>&1; then
+            skip "claude marketplace ${name} (already registered)"
+            continue
+        fi
+        if claude plugin marketplace add "$source" --scope user </dev/null >/dev/null 2>&1; then
+            ok "claude marketplace registered: ${name} (${source})"
+        else
+            warn "failed to register claude marketplace ${source}"
+        fi
+    done < <(manifest_query "${MANIFEST_JQ_PRELUDE}"'
+        (.claude.marketplaces // [])[] | entry | "\(.name)\t\(.source)"')
+
+    local installed
+    installed="$(claude plugin list --json 2>/dev/null || echo '[]')"
+    jq -e . <<<"$installed" >/dev/null 2>&1 || installed='[]'
+
+    local id scope
+    while IFS=$'\t' read -r id scope; do
+        [[ -z "${id:-}" ]] && continue
+        if jq -e --arg id "$id" \
+            'any(.[]?; .id == $id or (.id | split("@")[0]) == ($id | split("@")[0]))' \
+            <<<"$installed" >/dev/null 2>&1; then
+            skip "claude plugin ${id} (already installed)"
+            continue
+        fi
+        if claude plugin install "$id" --scope "$scope" --yes </dev/null >/dev/null 2>&1; then
+            ok "claude plugin installed: ${id}"
+        else
+            warn "failed to install claude plugin ${id}"
+        fi
+    done < <(manifest_query '
+        (.claude.plugins // [])[]
+        | (if type == "string" then {id: .} else . end)
+        | "\(.id)\t\(.scope // "user")"')
+}
+
+# ── GitHub Copilot CLI plugins ───────────────────────────────────────────────
+# The copilot CLI ships with the copilot-plugins and awesome-copilot
+# marketplaces; extra ones are added with `copilot plugin marketplace add`.
+# Plugins install from a marketplace, a GitHub repo, a repo subdirectory
+# (owner/repo:path) or a git URL.
+
+install_copilot_plugins() {
+    info "GitHub Copilot — plugins from ${PLUGINS_MANIFEST}"
+
+    if ! command -v copilot &>/dev/null; then
+        skip "copilot CLI not found — skipping Copilot plugins"
+        return
+    fi
+
+    local markets
+    markets="$(copilot plugin marketplace list 2>/dev/null || true)"
+
+    local name source
+    while IFS=$'\t' read -r name source; do
+        [[ -z "${name:-}" ]] && continue
+        if grep -qE "(^|[[:space:]])${name}[[:space:]]*\(" <<<"$markets"; then
+            skip "copilot marketplace ${name} (already registered)"
+            continue
+        fi
+        if copilot plugin marketplace add "$source" </dev/null >/dev/null 2>&1; then
+            ok "copilot marketplace registered: ${name} (${source})"
+            markets="$(copilot plugin marketplace list </dev/null 2>/dev/null || true)"
+        else
+            warn "failed to register copilot marketplace ${source}"
+        fi
+    done < <(manifest_query "${MANIFEST_JQ_PRELUDE}"'
+        (.copilot.marketplaces // [])[] | entry | "\(.name)\t\(.source)"')
+
+    local installed
+    installed="$(copilot plugin list 2>/dev/null || true)"
+
+    while IFS=$'\t' read -r name source; do
+        [[ -z "${source:-}" ]] && continue
+        if grep -qE "(^|[^[:alnum:]_-])${name}([^[:alnum:]_-]|$)" <<<"$installed"; then
+            skip "copilot plugin ${name} (already installed)"
+            continue
+        fi
+        if copilot plugin install "$source" </dev/null >/dev/null 2>&1; then
+            ok "copilot plugin installed: ${name} (${source})"
+            installed="$(copilot plugin list </dev/null 2>/dev/null || true)"
+        else
+            warn "failed to install copilot plugin ${source}"
+        fi
+    done < <(manifest_query "${MANIFEST_JQ_PRELUDE}"'
+        (.copilot.plugins // [])[]
+        | (if type == "string" then {source: .} else . end)
+        | "\(.name // pname(.source))\t\(.source)"')
+}
+
+# ── opencode plugins ─────────────────────────────────────────────────────────
+# `opencode plugin <npm-module> --global` downloads the module and records it in
+# the "plugin" array of ~/.config/opencode/opencode.json.
+
+install_opencode_plugins() {
+    info "opencode — plugins from ${PLUGINS_MANIFEST}"
+
+    if ! command -v opencode &>/dev/null; then
+        skip "opencode CLI not found — skipping opencode plugins"
+        return
+    fi
+
+    local cfg="${HOME}/.config/opencode/opencode.json"
+    local module base existing found entry
+
+    while IFS= read -r module; do
+        [[ -z "${module:-}" ]] && continue
+        base="$(module_base "$module")"
+
+        found="false"
+        if [[ -f "$cfg" ]]; then
+            existing="$(jq -r '(.plugin // [])[]?' "$cfg" 2>/dev/null || true)"
+            while IFS= read -r entry; do
+                [[ -z "${entry:-}" ]] && continue
+                if [[ "$(module_base "$entry")" == "$base" ]]; then
+                    found="true"
+                    break
+                fi
+            done <<<"$existing"
+        fi
+
+        if [[ "$found" == "true" ]]; then
+            skip "opencode plugin ${base} (already configured)"
+            continue
+        fi
+
+        if opencode plugin "$module" --global </dev/null >/dev/null 2>&1; then
+            ok "opencode plugin installed: ${module}"
+        else
+            warn "failed to install opencode plugin ${module}"
+        fi
+    done < <(manifest_query '
+        (.opencode.plugins // [])[]
+        | if type == "string" then . else .module end')
+}
+
+# ── public skills via npx ────────────────────────────────────────────────────
+# The `skills` CLI (npx skills) installs public Agent Skills from GitHub repos
+# and links them into every detected agent's skills directory.
+
+install_public_skills() {
+    info "public skills — from ${PLUGINS_MANIFEST}"
+
+    local count
+    count="$(manifest_query '(.skills // []) | length')"
+    if [[ -z "${count:-}" || "$count" == "0" ]]; then
+        skip "no public skills declared"
+        return
+    fi
+
+    if ! command -v npx &>/dev/null; then
+        warn "npx not found — skipping public skills (install Node.js and re-run)"
+        return
+    fi
+
+    local installed
+    installed="$(npx -y "$SKILLS_CLI_PKG" list --global --json 2>/dev/null || echo '[]')"
+    jq -e . <<<"$installed" >/dev/null 2>&1 || installed='[]'
+
+    local source names agents scope scope_flag
+    while IFS=$'\t' read -r source names agents scope; do
+        [[ -z "${source:-}" ]] && continue
+
+        if jq -e --arg s "$source" \
+            'any(.[]?; ((.source // "") | contains($s)) or ((.sourceUrl // "") | contains($s)))' \
+            <<<"$installed" >/dev/null 2>&1; then
+            skip "public skills ${source} (already installed)"
+            continue
+        fi
+
+        scope_flag="--global"
+        [[ "$scope" == "project" ]] && scope_flag="--project"
+
+        if npx -y "$SKILLS_CLI_PKG" add "$source" "$scope_flag" \
+            --skill "$names" --agent "$agents" --yes </dev/null >/dev/null 2>&1; then
+            ok "public skills installed: ${source} (skills=${names}, agents=${agents})"
+        else
+            warn "failed to install public skills from ${source}"
+        fi
+    done < <(manifest_query '
+        (.skills // [])[]
+        | (if type == "string" then {source: .} else . end)
+        | "\(.source)\t\(.skills // "*")\t\(.agents // "*")\t\(.scope // "global")"')
+}
+
+# install_plugins
+# Runs every manifest-driven installation method.
+install_plugins() {
+    if [[ "$INSTALL_PLUGINS" != "true" ]]; then
+        skip "plugin installation disabled (--no-plugins)"
+        return
+    fi
+    plugins_manifest_ready || return 0
+
+    install_claude_plugins
+    echo
+    install_copilot_plugins
+    echo
+    install_opencode_plugins
+    echo
+    install_public_skills
+}
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
+usage() {
+    cat <<'EOF'
+Usage: install.sh [options]
+
+Options:
+  --no-plugins   Only link this repo's skills/ and agents/; skip installing the
+                 third-party plugins and public skills declared in plugins.json
+  -h, --help     Show this help
+
+Environment:
+  PAI_PLUGINS_MANIFEST  Path to the plugin manifest (default: <repo>/plugins.json)
+  PAI_SKILLS_CLI        npm spec for the public-skills CLI (default: skills@latest)
+EOF
+}
+
 main() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-plugins) INSTALL_PLUGINS="false" ;;
+            -h|--help) usage; return 0 ;;
+            *) warn "unknown option: $1"; usage; return 1 ;;
+        esac
+        shift
+    done
+
     info "personal-ai-tooling installer"
     info "Repo: ${REPO_DIR}"
     echo
@@ -311,6 +619,8 @@ main() {
     install_claude
     echo
     install_vscode
+    echo
+    install_plugins
     echo
 
     info "Done."
