@@ -21,8 +21,8 @@
       "github@claude-plugins-official",
       "commit-commands@claude-plugins-official",
       "code-review@claude-plugins-official",
-      "semgrep@claude-plugins-official",
-      "grafana-mcp@claude-plugins-official"
+      "grafana-mcp@claude-plugins-official",
+      "context7@claude-plugins-official"
     ]
   },
 
@@ -33,13 +33,15 @@
       "security-best-practices@awesome-copilot",
       "testing-automation@awesome-copilot",
       "arch@awesome-copilot",
-      "repo-actions-hub@awesome-copilot"
+      "repo-actions-hub@awesome-copilot",
+      { "name": "context7", "source": "upstash/context7-mcp:plugins/copilot/context7" }
     ]
   },
 
   "opencode": {
     "plugins": [
-      "opencode-otel@1.2.1"
+      "opencode-otel@1.2.1",
+      "@upstash/context7-opencode@0.1.0"
     ]
   },
 
