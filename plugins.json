@@ -16,17 +16,31 @@
       "playwright@claude-plugins-official",
       "security-guidance@claude-plugins-official",
       "superpowers@claude-plugins-official",
-      "typescript-lsp@claude-plugins-official"
+      "typescript-lsp@claude-plugins-official",
+      "terraform@claude-plugins-official",
+      "github@claude-plugins-official",
+      "commit-commands@claude-plugins-official",
+      "code-review@claude-plugins-official",
+      "semgrep@claude-plugins-official",
+      "grafana-mcp@claude-plugins-official"
     ]
   },
 
   "copilot": {
     "marketplaces": [],
-    "plugins": []
+    "plugins": [
+      "devops-oncall@awesome-copilot",
+      "security-best-practices@awesome-copilot",
+      "testing-automation@awesome-copilot",
+      "arch@awesome-copilot",
+      "repo-actions-hub@awesome-copilot"
+    ]
   },
 
   "opencode": {
-    "plugins": []
+    "plugins": [
+      "opencode-otel@1.2.1"
+    ]
   },
 
   "skills": []
