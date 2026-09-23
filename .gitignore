@@ -4,3 +4,5 @@ node_modules
 .sisyphus
 *-workspace
 
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

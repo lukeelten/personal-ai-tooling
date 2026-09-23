@@ -22,15 +22,26 @@
     are installed through each tool's own CLI:
       Claude Code   — claude plugin marketplace add / claude plugin install
       Copilot CLI   — copilot plugin marketplace add / copilot plugin install
-      opencode      — opencode plugin <npm-module> --global
+      opencode      — opencode plugin add <npm-module>
       public skills — npx skills add <owner/repo> --global
     See docs/ for details on each method.
+
+    Playwright CLI (@playwright/cli) is installed globally via npm, then its
+    own `playwright-cli install --skills` registers the playwright-cli Agent
+    Skill (independent of plugins.json).
 
 .PARAMETER NoPlugins
     Only link this repo's skills/ and agents/; skip the plugins.json section.
 
 .PARAMETER Manifest
     Path to the plugin manifest (default: <repo>\plugins.json).
+
+.PARAMETER PlaywrightCliPackage
+    npm spec for @playwright/cli (default: @playwright/cli@latest).
+
+.PARAMETER DebugErrors
+    Print the real command output/errors when an install step fails, instead
+    of just the summary [warn] line.
 
 .NOTES
     Run from the repository root or any location — the script resolves its
@@ -40,7 +51,9 @@
 param(
     [switch]$NoPlugins,
     [string]$Manifest,
-    [string]$SkillsCliPackage = 'skills@latest'
+    [string]$SkillsCliPackage = 'skills@latest',
+    [string]$PlaywrightCliPackage = '@playwright/cli@latest',
+    [switch]$DebugErrors
 )
 
 Set-StrictMode -Version Latest
@@ -60,6 +73,7 @@ function Write-Info  { param([string]$Msg) Write-Host "[info]  $Msg" -Foreground
 function Write-Ok    { param([string]$Msg) Write-Host "[ ok ]  $Msg" -ForegroundColor Green   }
 function Write-Skip  { param([string]$Msg) Write-Host "[skip]  $Msg" -ForegroundColor Yellow  }
 function Write-Warn  { param([string]$Msg) Write-Host "[warn]  $Msg" -ForegroundColor Yellow  }
+function Write-Dbg   { param([string]$Msg) Write-Host "[dbg ]  $Msg" -ForegroundColor DarkCyan }
 function Write-Err   { param([string]$Msg) Write-Host "[err ]  $Msg" -ForegroundColor Red     }
 
 # ── link helper ──────────────────────────────────────────────────────────────
@@ -179,7 +193,9 @@ function Install-VSCode {
 # ── plugin manifest helpers ──────────────────────────────────────────────────
 
 # Invoke an external CLI without letting it inherit/consume our pipeline input.
-# Returns a result object with ExitCode and combined Output.
+# Returns a result object with ExitCode and combined Output. When -DebugErrors
+# is set, a non-zero exit prints the real captured output so the caller's
+# generic "[warn] failed to ..." line isn't the only visible diagnostic.
 function Invoke-Cli {
     param(
         [Parameter(Mandatory)][string]$File,
@@ -190,9 +206,18 @@ function Invoke-Cli {
     try {
         $out = (& $File @Arguments 2>&1 | Out-String)
     } catch {
-        return [PSCustomObject]@{ ExitCode = 1; Output = "$_" }
+        $out = "$_"
+        if ($DebugErrors) {
+            Write-Dbg "command failed: $File $($Arguments -join ' ')"
+            Write-Dbg $out.TrimEnd()
+        }
+        return [PSCustomObject]@{ ExitCode = 1; Output = $out }
     }
     $code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+    if ($code -ne 0 -and $DebugErrors) {
+        Write-Dbg "command failed (exit ${code}): $File $($Arguments -join ' ')"
+        if ($out.Trim()) { Write-Dbg $out.TrimEnd() }
+    }
     return [PSCustomObject]@{ ExitCode = $code; Output = $out }
 }
 
@@ -405,7 +430,7 @@ function Install-OpencodePlugins {
         if (Test-Path -LiteralPath $cfg) {
             try {
                 $cj = Get-Content -LiteralPath $cfg -Raw -Encoding UTF8 | ConvertFrom-Json
-                $existing = @(Get-Prop $cj 'plugin' @())
+                $existing = @(Get-Prop $cj 'plugins' @())
             } catch { $existing = @() }
         }
 
@@ -415,7 +440,7 @@ function Install-OpencodePlugins {
             continue
         }
 
-        $r = Invoke-Cli 'opencode' @('plugin', $module, '--global')
+        $r = Invoke-Cli 'opencode' @('plugin', 'add', $module)
         if ($r.ExitCode -eq 0) {
             Write-Ok "opencode plugin installed: $module"
         } else {
@@ -480,6 +505,64 @@ function Install-PublicSkills {
     }
 }
 
+# ── Playwright CLI ───────────────────────────────────────────────────────────
+# Installs @playwright/cli globally via npm, then runs its own
+# `playwright-cli install --skills` to register the playwright-cli Agent Skill.
+# Tries a real global install via `sudo` first (present on Win11+/macOS/Linux
+# when running pwsh); if sudo is unavailable/denied, falls back to a
+# user-local npm prefix ($HOME/.npm-global) so the install never requires
+# elevated privileges to succeed.
+
+function Ensure-PlaywrightCli {
+    Write-Info "playwright-cli — from npm ($PlaywrightCliPackage)"
+
+    if (-not (Test-Command 'npm')) {
+        Write-Warn "npm not found — skipping playwright-cli (install Node.js and re-run)"
+        return
+    }
+
+    if (Test-Command 'playwright-cli') {
+        Write-Skip "playwright-cli already installed"
+    } else {
+        $installed = $false
+
+        if (Test-Command 'sudo') {
+            Write-Info "attempting 'sudo npm install -g' (may prompt for your password)"
+            $r = Invoke-Cli 'sudo' @('npm', 'install', '-g', $PlaywrightCliPackage)
+            if ($r.ExitCode -eq 0) {
+                $installed = $true
+            } elseif ($DebugErrors) {
+                Write-Dbg "sudo install failed or unavailable, falling back to user-local install"
+            }
+        }
+
+        if (-not $installed) {
+            $npmPrefix = Join-Path $HOME '.npm-global'
+            New-Item -ItemType Directory -Force -Path $npmPrefix | Out-Null
+            $r = Invoke-Cli 'npm' @('install', '-g', '--prefix', $npmPrefix, $PlaywrightCliPackage)
+            if ($r.ExitCode -eq 0) {
+                $installed = $true
+                $env:PATH = "$(Join-Path $npmPrefix 'bin')$([IO.Path]::PathSeparator)$env:PATH"
+                Write-Info "installed to $npmPrefix — add '$(Join-Path $npmPrefix 'bin')' to your PATH to use playwright-cli in new shells"
+            }
+        }
+
+        if ($installed) {
+            Write-Ok "installed $PlaywrightCliPackage via npm"
+        } else {
+            Write-Warn "failed to install $PlaywrightCliPackage via npm (sudo and user-local install both failed)"
+            return
+        }
+    }
+
+    $r = Invoke-Cli 'playwright-cli' @('install', '--skills')
+    if ($r.ExitCode -eq 0) {
+        Write-Ok "playwright-cli skills installed"
+    } else {
+        Write-Warn "failed to run 'playwright-cli install --skills'"
+    }
+}
+
 function Install-Plugins {
     if ($NoPlugins) {
         Write-Skip "plugin installation disabled (-NoPlugins)"
@@ -508,6 +591,8 @@ Write-Host ""
 Install-Claude
 Write-Host ""
 Install-VSCode
+Write-Host ""
+Ensure-PlaywrightCli
 Write-Host ""
 Install-Plugins
 Write-Host ""

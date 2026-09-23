@@ -16,11 +16,15 @@
 # are installed via each tool's own CLI:
 #   Claude Code   — claude plugin marketplace add / claude plugin install
 #   Copilot CLI   — copilot plugin marketplace add / copilot plugin install
-#   opencode      — opencode plugin <npm-module> --global
+#   opencode      — opencode plugin add <npm-module>
 #   public skills — npx skills add <owner/repo> --global
+#
+# Playwright CLI (@playwright/cli) is installed globally via npm, then its
+# own `playwright-cli install --skills` registers the playwright-cli Agent
+# Skill (independent of plugins.json).
 # See docs/ for details on each method.
 #
-# Usage: ./install.sh [--no-plugins]
+# Usage: ./install.sh [--no-plugins] [--debug]
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +32,9 @@ SKILLS_SRC="${REPO_DIR}/skills"
 AGENTS_SRC="${REPO_DIR}/agents"
 PLUGINS_MANIFEST="${PAI_PLUGINS_MANIFEST:-${REPO_DIR}/plugins.json}"
 SKILLS_CLI_PKG="${PAI_SKILLS_CLI:-skills@latest}"
+PLAYWRIGHT_CLI_PKG="${PAI_PLAYWRIGHT_CLI:-@playwright/cli@latest}"
 INSTALL_PLUGINS="true"
+DEBUG="false"
 HELM_LS_LOCAL_BIN_DIR="${HOME}/.local/share/personal-ai-tooling/bin"
 HELM_LS_LOCAL_BIN="${HELM_LS_LOCAL_BIN_DIR}/helm_ls"
 HELM_LS_CMD=""
@@ -39,6 +45,28 @@ info()  { printf '\033[1;34m[info]\033[0m  %s\n' "$*"; }
 ok()    { printf '\033[1;32m[ ok ]\033[0m  %s\n' "$*"; }
 skip()  { printf '\033[1;33m[skip]\033[0m  %s\n' "$*"; }
 warn()  { printf '\033[1;33m[warn]\033[0m  %s\n' "$*"; }
+debug() { [[ "$DEBUG" == "true" ]] && printf '\033[1;36m[dbg ]\033[0m  %s\n' "$*" >&2 || true; }
+
+# run_cmd <command> [args...]
+# Runs a command with stdin detached, capturing its combined stdout/stderr.
+# Returns the command's exit code. When --debug is set, prints the captured
+# output (and the exact command line) on failure so the real error is visible
+# instead of being silently swallowed by the caller's `>/dev/null 2>&1`.
+run_cmd() {
+    local output status
+    output="$("$@" </dev/null 2>&1)"
+    status=$?
+    if [[ $status -ne 0 && "$DEBUG" == "true" ]]; then
+        debug "command failed (exit ${status}): $*"
+        if [[ -n "$output" ]]; then
+            local line
+            while IFS= read -r line; do
+                debug "  ${line}"
+            done <<<"$output"
+        fi
+    fi
+    return $status
+}
 
 # link_dir <src> <dst>
 # Symlinks <dst> → <src>.  Idempotent; backs up collisions.
@@ -381,7 +409,7 @@ install_claude_plugins() {
             skip "claude marketplace ${name} (already registered)"
             continue
         fi
-        if claude plugin marketplace add "$source" --scope user </dev/null >/dev/null 2>&1; then
+        if run_cmd claude plugin marketplace add "$source" --scope user; then
             ok "claude marketplace registered: ${name} (${source})"
         else
             warn "failed to register claude marketplace ${source}"
@@ -402,7 +430,7 @@ install_claude_plugins() {
             skip "claude plugin ${id} (already installed)"
             continue
         fi
-        if claude plugin install "$id" --scope "$scope" --yes </dev/null >/dev/null 2>&1; then
+        if run_cmd claude plugin install "$id" --scope "$scope" --yes; then
             ok "claude plugin installed: ${id}"
         else
             warn "failed to install claude plugin ${id}"
@@ -437,7 +465,7 @@ install_copilot_plugins() {
             skip "copilot marketplace ${name} (already registered)"
             continue
         fi
-        if copilot plugin marketplace add "$source" </dev/null >/dev/null 2>&1; then
+        if run_cmd copilot plugin marketplace add "$source"; then
             ok "copilot marketplace registered: ${name} (${source})"
             markets="$(copilot plugin marketplace list </dev/null 2>/dev/null || true)"
         else
@@ -455,7 +483,7 @@ install_copilot_plugins() {
             skip "copilot plugin ${name} (already installed)"
             continue
         fi
-        if copilot plugin install "$source" </dev/null >/dev/null 2>&1; then
+        if run_cmd copilot plugin install "$source"; then
             ok "copilot plugin installed: ${name} (${source})"
             installed="$(copilot plugin list </dev/null 2>/dev/null || true)"
         else
@@ -468,8 +496,8 @@ install_copilot_plugins() {
 }
 
 # ── opencode plugins ─────────────────────────────────────────────────────────
-# `opencode plugin <npm-module> --global` downloads the module and records it in
-# the "plugin" array of ~/.config/opencode/opencode.json.
+# `opencode plugin add <npm-module>` downloads the module and records it in
+# the "plugins" array of ~/.config/opencode/opencode.json.
 
 install_opencode_plugins() {
     info "opencode — plugins from ${PLUGINS_MANIFEST}"
@@ -488,7 +516,7 @@ install_opencode_plugins() {
 
         found="false"
         if [[ -f "$cfg" ]]; then
-            existing="$(jq -r '(.plugin // [])[]?' "$cfg" 2>/dev/null || true)"
+            existing="$(jq -r '(.plugins // [])[]?' "$cfg" 2>/dev/null || true)"
             while IFS= read -r entry; do
                 [[ -z "${entry:-}" ]] && continue
                 if [[ "$(module_base "$entry")" == "$base" ]]; then
@@ -503,7 +531,7 @@ install_opencode_plugins() {
             continue
         fi
 
-        if opencode plugin "$module" --global </dev/null >/dev/null 2>&1; then
+        if run_cmd opencode plugin add "$module"; then
             ok "opencode plugin installed: ${module}"
         else
             warn "failed to install opencode plugin ${module}"
@@ -550,8 +578,8 @@ install_public_skills() {
         scope_flag="--global"
         [[ "$scope" == "project" ]] && scope_flag="--project"
 
-        if npx -y "$SKILLS_CLI_PKG" add "$source" "$scope_flag" \
-            --skill "$names" --agent "$agents" --yes </dev/null >/dev/null 2>&1; then
+        if run_cmd npx -y "$SKILLS_CLI_PKG" add "$source" "$scope_flag" \
+            --skill "$names" --agent "$agents" --yes; then
             ok "public skills installed: ${source} (skills=${names}, agents=${agents})"
         else
             warn "failed to install public skills from ${source}"
@@ -560,6 +588,61 @@ install_public_skills() {
         (.skills // [])[]
         | (if type == "string" then {source: .} else . end)
         | "\(.source)\t\(.skills // "*")\t\(.agents // "*")\t\(.scope // "global")"')
+}
+
+# ── Playwright CLI ───────────────────────────────────────────────────────────
+# Installs @playwright/cli globally via npm, then runs its own
+# `playwright-cli install --skills` to register the playwright-cli Agent Skill.
+# Tries a real global install via sudo first (works when the default npm
+# prefix is root-owned); if sudo is unavailable/denied, falls back to a
+# user-local npm prefix ($HOME/.npm-global) so the install never requires
+# elevated privileges to succeed.
+
+ensure_playwright_cli() {
+    info "playwright-cli — from npm (${PLAYWRIGHT_CLI_PKG})"
+
+    if ! command -v npm &>/dev/null; then
+        warn "npm not found — skipping playwright-cli (install Node.js and re-run)"
+        return
+    fi
+
+    if command -v playwright-cli &>/dev/null; then
+        skip "playwright-cli already installed ($(command -v playwright-cli))"
+    else
+        local installed="false"
+
+        if command -v sudo &>/dev/null; then
+            info "attempting 'sudo npm install -g' (may prompt for your password)"
+            if run_cmd sudo npm install -g "$PLAYWRIGHT_CLI_PKG"; then
+                installed="true"
+            else
+                debug "sudo install failed or unavailable, falling back to user-local install"
+            fi
+        fi
+
+        if [[ "$installed" != "true" ]]; then
+            local npm_prefix="$HOME/.npm-global"
+            mkdir -p "$npm_prefix"
+            if run_cmd npm install -g --prefix "$npm_prefix" "$PLAYWRIGHT_CLI_PKG"; then
+                installed="true"
+                export PATH="${npm_prefix}/bin:${PATH}"
+                info "installed to ${npm_prefix} — add '${npm_prefix}/bin' to your PATH to use playwright-cli in new shells"
+            fi
+        fi
+
+        if [[ "$installed" == "true" ]]; then
+            ok "installed ${PLAYWRIGHT_CLI_PKG} via npm"
+        else
+            warn "failed to install ${PLAYWRIGHT_CLI_PKG} via npm (sudo and user-local install both failed)"
+            return
+        fi
+    fi
+
+    if run_cmd playwright-cli install --skills; then
+        ok "playwright-cli skills installed"
+    else
+        warn "failed to run 'playwright-cli install --skills'"
+    fi
 }
 
 # install_plugins
@@ -589,11 +672,14 @@ Usage: install.sh [options]
 Options:
   --no-plugins   Only link this repo's skills/ and agents/; skip installing the
                  third-party plugins and public skills declared in plugins.json
+  --debug        Print the real command output/errors when an install step
+                 fails, instead of just the summary [warn] line
   -h, --help     Show this help
 
 Environment:
   PAI_PLUGINS_MANIFEST  Path to the plugin manifest (default: <repo>/plugins.json)
   PAI_SKILLS_CLI        npm spec for the public-skills CLI (default: skills@latest)
+  PAI_PLAYWRIGHT_CLI    npm spec for @playwright/cli (default: @playwright/cli@latest)
 EOF
 }
 
@@ -601,6 +687,7 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --no-plugins) INSTALL_PLUGINS="false" ;;
+            --debug) DEBUG="true" ;;
             -h|--help) usage; return 0 ;;
             *) warn "unknown option: $1"; usage; return 1 ;;
         esac
@@ -619,6 +706,8 @@ main() {
     install_claude
     echo
     install_vscode
+    echo
+    ensure_playwright_cli
     echo
     install_plugins
     echo

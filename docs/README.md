@@ -5,16 +5,22 @@
 1. **Link this repo's own content** — `skills/` and `agents/` are symlinked
    (junctioned on Windows) into Claude Code and Copilot, and registered with
    opencode via `skills.paths`. Nothing to configure.
-2. **Install third-party plugins and public skills** declared in
+2. **Install `@playwright/cli`** globally via `npm`, then run its own
+   `playwright-cli install --skills` to register the playwright-cli Agent
+   Skill. Tries `sudo npm install -g` first, and falls back to a user-local
+   npm prefix (`$HOME/.npm-global`) if sudo is unavailable or denied — never
+   requires elevated privileges to succeed. Independent of `plugins.json`;
+   skipped if `npm` is unavailable.
+3. **Install third-party plugins and public skills** declared in
    [`../plugins.json`](../plugins.json), using each tool's own CLI.
 
-This directory documents job 2 — one document per installation method:
+This directory documents job 3 — one document per installation method:
 
 | Document | Method | Underlying command |
 |---|---|---|
 | [claude-plugins.md](claude-plugins.md) | Claude Code plugins | `claude plugin marketplace add` / `claude plugin install` |
 | [copilot-plugins.md](copilot-plugins.md) | GitHub Copilot CLI plugins | `copilot plugin marketplace add` / `copilot plugin install` |
-| [opencode-plugins.md](opencode-plugins.md) | opencode plugins | `opencode plugin <npm-module> --global` |
+| [opencode-plugins.md](opencode-plugins.md) | opencode plugins | `opencode plugin add <npm-module>` |
 | [public-skills-npx.md](public-skills-npx.md) | Public skills via npx | `npx skills add <owner/repo> --global` |
 
 ## The manifest
@@ -39,6 +45,7 @@ per-method documents for the exact fields.
 ```bash
 ./install.sh                 # link repo content + install everything in plugins.json
 ./install.sh --no-plugins    # link repo content only
+./install.sh --debug         # show real command output/errors on failure
 ./install.sh --help
 ```
 
@@ -46,6 +53,7 @@ per-method documents for the exact fields.
 .\install.ps1
 .\install.ps1 -NoPlugins
 .\install.ps1 -Manifest C:\path\to\plugins.json
+.\install.ps1 -DebugErrors
 ```
 
 ### Options
@@ -53,8 +61,10 @@ per-method documents for the exact fields.
 | Bash | PowerShell | Meaning |
 |---|---|---|
 | `--no-plugins` | `-NoPlugins` | Skip the whole `plugins.json` section |
+| `--debug` | `-DebugErrors` | Print the real command output/errors when an install step fails |
 | `PAI_PLUGINS_MANIFEST=<path>` | `-Manifest <path>` | Use a different manifest |
 | `PAI_SKILLS_CLI=<npm-spec>` | `-SkillsCliPackage <spec>` | Pin the public-skills CLI (default `skills@latest`) |
+| `PAI_PLAYWRIGHT_CLI=<npm-spec>` | `-PlaywrightCliPackage <spec>` | Pin `@playwright/cli` (default `@playwright/cli@latest`) |
 
 ## Behaviour guarantees
 
@@ -77,5 +87,6 @@ per-method documents for the exact fields.
 | Copilot plugins | `copilot` on `PATH` |
 | opencode plugins | `opencode` on `PATH` |
 | Public skills | `npx` (Node.js) on `PATH` |
+| Playwright CLI | `npm` (Node.js) on `PATH` |
 
 Anything missing is skipped with a message rather than failing the run.
